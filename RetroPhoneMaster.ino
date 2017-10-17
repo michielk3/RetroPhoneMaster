@@ -1,61 +1,116 @@
-// Wire Master Writer
-// by Nicholas Zambetti <http://www.zambetti.com>
+#include <SoftwareSerial.h>
 
-// Demonstrates use of the Wire library
-// Writes data to an I2C/TWI slave device
-// Refer to the "Wire Slave Receiver" example for use with this
+#define PIN_TX 11
+#define PIN_TX_ A1
+#define PIN_RST 10
+#define PIN_RST_ A2
+#define PIN_RX -1 // Disables recieving software serial data ?
+#define PIN_RING 13
+#define PIN_RING_ A0
 
-// Created 29 March 2006
+String inputString = "";         // a string to hold incoming data
+boolean stringComplete = false;  // whether the string is complete
+boolean doRing = false;
+boolean prevDoRing = doRing;
 
-// This example code is in the public domain.
-
-// TWI: A4 or SDA pin and A5 or SCL pin.
-
-#include <Wire.h>
-
-#define N_DIGIT                                       20  // # of digits (or char's)
 
 void setup()
 {
   Serial.begin(9600);
+
+  // reserve 200 bytes for the inputString:
+  inputString.reserve(200);
+
   while (!Serial)
   {
     ; // wait for serial port to connect. Needed for native USB port only
   }
-  Serial.println("PhoneControler");
-  
-  Wire.begin(); // join i2c bus (address optional for master)
+  Serial.println("RetroPhoneMaster: testfase: Test RingerControler");
+
+  pinMode(PIN_RST, OUTPUT);
+  pinMode(PIN_RST_, OUTPUT);
+  digitalWrite(PIN_RST, HIGH);
+  digitalWrite(PIN_RST_, HIGH);
+
+  pinMode(PIN_RING, OUTPUT);
+  pinMode(PIN_RING_, OUTPUT);
+  digitalWrite(PIN_RING, HIGH);
+  digitalWrite(PIN_RING_, HIGH);
 }
 
 void loop()
 {
-  if (Serial.available())
+  // print the string when a newline arrives:
+  if (stringComplete)
+  {
+    Serial.println(inputString);
+
+    // Doe iets
+    if (inputString == "A")
+    {
+      doRing = true;
+    }
+    if (inputString == "0")
+    {
+      doRing = false;
+    }
+    if (inputString == "RST")
+    {
+      digitalWrite(PIN_RST, LOW);
+      digitalWrite(PIN_RST_, LOW);
+      delay(100);
+      digitalWrite(PIN_RST, HIGH);
+      digitalWrite(PIN_RST_, HIGH);
+    }
+
+    if (prevDoRing != doRing)
+    {
+      if (doRing)
+      {
+        Serial.println("DO RING");
+      }
+      else
+      {
+        Serial.println("STOP RING");
+      }
+      digitalWrite(PIN_RING, doRing ? LOW : HIGH);
+      digitalWrite(PIN_RING_, doRing ? LOW : HIGH);
+    }
+    prevDoRing = doRing;
+
+    // clear the string:
+    inputString = "";
+    stringComplete = false;
+  }
+
+} // void loop ()
+
+/*
+  SerialEvent occurs whenever a new data comes in the
+  hardware serial RX.  This routine is run between each
+  time loop() runs, so using delay inside loop can delay
+  response.  Multiple bytes of data may be available.
+*/
+void serialEvent()
+{
+  while (Serial.available())
   {
     // get the new byte:
     char inChar = (char)Serial.read();
-    Serial.println(inChar);
-    
-    Wire.beginTransmission(1); // transmit to device #1
-    Wire.write(inChar);        // sends bytes
-    Wire.endTransmission();    // stop transmitting
-
-    delay(1000);
-    
-    Serial.println("Expect 21 bytes from i2c read");
-
-    for (int i = 0; i < N_DIGIT+1; i++)
+    // if the incoming character is a newline, set a flag
+    // so the main loop can do something about it:
+    if (inChar == '\n')
     {
-      Wire.requestFrom(1, 1);// request 1 byte from slave device #1
-      if(Wire.available())    // slave may send less than requested
-      { 
-        byte c = Wire.read();    // receive a byte as character
-        Serial.print((char) c);
-      }
+      stringComplete = true;
     }
-    
-  } // if (Serial.available)
-  
-} // void loop ()
+    else
+    {
+      // add inChar to the inputString:
+      inputString += inChar;
+    }
+  }
+}
+
 
 
 
