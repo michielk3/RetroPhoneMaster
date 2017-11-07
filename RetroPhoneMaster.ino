@@ -13,6 +13,13 @@ boolean stringComplete = false;  // whether the string is complete
 boolean doRing = false;
 boolean prevDoRing = doRing;
 
+boolean doMeasure = false;
+
+unsigned long delta = 0;
+unsigned long startMicros = 0;
+volatile unsigned short data[ndata];
+volatile unsigned short idata = 0;
+volatile long duration = 0;
 
 void setup()
 {
@@ -62,6 +69,10 @@ void loop()
       digitalWrite(PIN_RST, HIGH);
       digitalWrite(PIN_RST_, HIGH);
     }
+    if (inputString == "M")
+    {
+      doMeasure = true;
+    }
 
     if (prevDoRing != doRing)
     {
@@ -81,6 +92,98 @@ void loop()
     // clear the string:
     inputString = "";
     stringComplete = false;
+  } // END if (stringComplete)
+
+
+  // print the freq when a newline arrives:
+  if (doMeasure)
+  {
+    noInterrupts();
+    idataCopy = idata;
+    interrupts();
+    
+    if (idataCopy < ndata)
+    { // measure data
+      if (idataCopy == 0)
+      { // Measure data
+    
+        // Start ringing
+        digitalWrite(ringingPin, HIGH);
+
+        // Start measuring
+        Timer1.attachInterrupt(timerIsr,delta);
+      
+      }
+      //digitalWrite(ring1Pin,HIGH);
+    }
+    else
+    { // print data
+      // Stop measuring
+      Timer1.detachInterrupt();
+    
+      Serial.print("duration=");Serial.print(duration);Serial.println(" (us)");
+      Serial.println();
+
+      //digitalWrite(ring1Pin,LOW);
+
+      // Stop ringing
+      digitalWrite(ringingPin, LOW);
+      
+      // Bepaal min en max
+      unsigned short min = 1023;
+      unsigned short max = 0;
+      for (int i=0; i<ndata; i++)
+      {
+        if (data[i] > max)
+          max = data[i];
+        if (data[i] < min)
+          min = data[i];
+      }
+
+      // print graphic
+      Serial.print("max: "); Serial.println(5.*max/1023);
+      for (int inivo=(nnivo-1); inivo>=0; inivo--)
+      {
+        for (int i=0; i<ndata; i++)
+        {
+          int nivo = int(.5 + (nnivo-1) * ((float) data[i] - min)/(max - min));
+          if (nivo == inivo)
+          {
+            Serial.print("*");
+          }
+          else
+          {
+            Serial.print(" ");
+          }
+        }
+        Serial.println();
+      }
+      Serial.print("min: "); Serial.println(5.*min/1023);
+      Serial.print("0                       ---->             ");
+      Serial.print(ndata*delta);
+      Serial.println("    microseconds");
+      
+      // clear data
+      for (int i=0; i < ndata; i++)
+        data[i] = 0;
+        
+      noInterrupts();
+      idata = 0;
+      interrupts();
+      
+      doMeasure = false;
+    }
+
+    askParams = true;
+  } // END if (doMeasure)
+  else
+  {
+    // Bepaalopname parameters
+    if (askParams)
+    {
+      Serial.println("\nGeef opname tijdstap (microseconds): ");
+      askParams = false;
+    }
   }
 
 } // void loop ()
@@ -97,7 +200,7 @@ void serialEvent()
   {
     // get the new byte:
     char inChar = (char)Serial.read();
-    // if the incoming character is a newline, set a flag
+     if the incoming character is a newline, set a flag/
     // so the main loop can do something about it:
     if (inChar == '\n')
     {
@@ -113,4 +216,14 @@ void serialEvent()
 
 
 
+void timerIsr()
+{
+  duration = micros();
+//  if (isAnalog)/
+    data[idata] = analogRead(measurePin);
+//  else
+//    data[idata] = digitalRead(measurePin);
+  idata++;
+  duration = micros() - duration;
+}
 
