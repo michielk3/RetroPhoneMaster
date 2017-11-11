@@ -1,4 +1,4 @@
-#include <SoftwareSerial.h>
+//#include <SoftwareSerial.h>
 
 #define PIN_TX 11
 #define PIN_TX_ A1
@@ -8,21 +8,29 @@
 #define PIN_RING 13
 #define PIN_RING_ A0
 
-String inputString = "";         // a string to hold incoming data
-boolean stringComplete = false;  // whether the string is complete
-boolean doRing = false;
-boolean prevDoRing = doRing;
+#define PIN_TO_HIGH 2
+#define PIN_TO_LOW  3
 
-boolean doMeasure = false;
+#define NDATA 10
 
-unsigned long delta = 0;
-unsigned long startMicros = 0;
-volatile unsigned short data[ndata];
-volatile unsigned short idata = 0;
-volatile long duration = 0;
+String  inputString                      = "";     // a string to hold incoming data
+boolean stringComplete                   = false;  // whether the string is complete
+boolean doRing                           = false;
+boolean prevDoRing                       = doRing;
+
+volatile boolean        doMeasure        = false;
+
+volatile unsigned int   duration[NDATA];
+volatile unsigned int   durationHigh[NDATA];
+volatile unsigned short idata            = 0;
+volatile unsigned long  lastToHighMicros = 0;
 
 void setup()
 {
+
+  pinMode(PIN_TO_HIGH, INPUT_PULLUP);
+  pinMode(PIN_TO_LOW,  INPUT_PULLUP);
+  
   Serial.begin(9600);
 
   // reserve 200 bytes for the inputString:
@@ -34,15 +42,16 @@ void setup()
   }
   Serial.println("RetroPhoneMaster: testfase: Test RingerControler");
 
-  pinMode(PIN_RST, OUTPUT);
+  pinMode(PIN_RST,  OUTPUT);
   pinMode(PIN_RST_, OUTPUT);
-  digitalWrite(PIN_RST, HIGH);
+  digitalWrite(PIN_RST,  HIGH);
   digitalWrite(PIN_RST_, HIGH);
 
-  pinMode(PIN_RING, OUTPUT);
+  pinMode(PIN_RING,  OUTPUT);
   pinMode(PIN_RING_, OUTPUT);
-  digitalWrite(PIN_RING, HIGH);
+  digitalWrite(PIN_RING,  HIGH);
   digitalWrite(PIN_RING_, HIGH);
+
 }
 
 void loop()
@@ -71,7 +80,10 @@ void loop()
     }
     if (inputString == "M")
     {
+      // Start measuring
       doMeasure = true;
+      attachInterrupt(digitalPinToInterrupt(PIN_TO_HIGH), toHighIsr, RISING);
+      attachInterrupt(digitalPinToInterrupt(PIN_TO_LOW),  toLowIsr,  FALLING);
     }
 
     if (prevDoRing != doRing)
@@ -90,101 +102,82 @@ void loop()
     prevDoRing = doRing;
 
     // clear the string:
-    inputString = "";
+    inputString    = "";
     stringComplete = false;
+    
   } // END if (stringComplete)
 
 
-  // print the freq when a newline arrives:
   if (doMeasure)
   {
-    noInterrupts();
-    idataCopy = idata;
-    interrupts();
-    
-    if (idataCopy < ndata)
-    { // measure data
-      if (idataCopy == 0)
-      { // Measure data
-    
-        // Start ringing
-        digitalWrite(ringingPin, HIGH);
-
-        // Start measuring
-        Timer1.attachInterrupt(timerIsr,delta);
-      
-      }
-      //digitalWrite(ring1Pin,HIGH);
-    }
-    else
+    if (idata >= NDATA)
     { // print data
-      // Stop measuring
-      Timer1.detachInterrupt();
-    
-      Serial.print("duration=");Serial.print(duration);Serial.println(" (us)");
-      Serial.println();
-
-      //digitalWrite(ring1Pin,LOW);
-
-      // Stop ringing
-      digitalWrite(ringingPin, LOW);
       
-      // Bepaal min en max
-      unsigned short min = 1023;
-      unsigned short max = 0;
-      for (int i=0; i<ndata; i++)
-      {
-        if (data[i] > max)
-          max = data[i];
-        if (data[i] < min)
-          min = data[i];
-      }
+      // Stop measuring
+      detachInterrupt(digitalPinToInterrupt(PIN_TO_HIGH));
+      detachInterrupt(digitalPinToInterrupt(PIN_TO_LOW));
+      doMeasure        = false;
 
-      // print graphic
-      Serial.print("max: "); Serial.println(5.*max/1023);
-      for (int inivo=(nnivo-1); inivo>=0; inivo--)
+      // ... en reset
+      idata            = 0;
+      lastToHighMicros = 0;
+
+      // Toon data
+      Serial.println("duration | durationHigh");
+      for (int i = 0; i < NDATA; i++)
       {
-        for (int i=0; i<ndata; i++)
-        {
-          int nivo = int(.5 + (nnivo-1) * ((float) data[i] - min)/(max - min));
-          if (nivo == inivo)
-          {
-            Serial.print("*");
-          }
-          else
-          {
-            Serial.print(" ");
-          }
-        }
+        Serial.print(duration[i]);
+        Serial.print(" | ");
+        Serial.print(durationHigh[i]);
         Serial.println();
       }
-      Serial.print("min: "); Serial.println(5.*min/1023);
-      Serial.print("0                       ---->             ");
-      Serial.print(ndata*delta);
-      Serial.println("    microseconds");
       
-      // clear data
-      for (int i=0; i < ndata; i++)
-        data[i] = 0;
-        
-      noInterrupts();
-      idata = 0;
-      interrupts();
+      // Bereken gemiddelde period en spreiding ervan
+      unsigned int mean = 0;
+      for (int i = 0; i < NDATA; i++)
+        mean += duration[i];
+      mean = int (mean / NDATA);
+
+      unsigned int sdev = 0;
+      for (int i = 0; i < NDATA; i++)
+      {
+        sdev = mean - duration[i];
+        sdev = sdev * sdev;
+      }
+      sdev = int(sqrt(sdev / NDATA));
+
+      Serial.print("duration = ");
+      Serial.print(mean);
+      Serial.println(" +/- ");
+      Serial.print(sdev);
+      Serial.println(" (us)");
+      Serial.println();
       
-      doMeasure = false;
+      // Bereken gemiddelde duty cycle en spreiding ervan
+      mean = 0;
+      for (int i = 0; i < NDATA; i++)
+        mean += int(100 * durationHigh[i] / duration[i]);
+      mean = int (mean / NDATA);
+
+      sdev = 0;
+      for (int i = 0; i < NDATA; i++)
+      {
+        sdev = (mean - int(100 * durationHigh[i] / duration[i]));
+        sdev = sdev * sdev;
+      }
+      sdev = int(sqrt(sdev / NDATA));
+
+      Serial.print("duty = ");
+      Serial.print(mean);
+      Serial.println(" +/- ");
+      Serial.print(sdev);
+      Serial.println(" (%)");
+      Serial.println();
+
+ 
     }
 
-    askParams = true;
   } // END if (doMeasure)
-  else
-  {
-    // Bepaalopname parameters
-    if (askParams)
-    {
-      Serial.println("\nGeef opname tijdstap (microseconds): ");
-      askParams = false;
-    }
-  }
 
 } // void loop ()
 
@@ -200,7 +193,7 @@ void serialEvent()
   {
     // get the new byte:
     char inChar = (char)Serial.read();
-     if the incoming character is a newline, set a flag/
+    // if the incoming character is a newline, set a flag
     // so the main loop can do something about it:
     if (inChar == '\n')
     {
@@ -214,16 +207,24 @@ void serialEvent()
   }
 }
 
-
-
-void timerIsr()
+// Interrupt routine voor als pin naar hoog gaat
+void toHighIsr()
 {
-  duration = micros();
-//  if (isAnalog)/
-    data[idata] = analogRead(measurePin);
-//  else
-//    data[idata] = digitalRead(measurePin);
-  idata++;
-  duration = micros() - duration;
+  // Bepaal periode
+  unsigned long changeMicros = micros();
+  if (lastToHighMicros != 0 && idata < NDATA)
+    duration[idata] = int(changeMicros - lastToHighMicros);
+  lastToHighMicros = changeMicros;
+}
+
+// Interrupt routine voor als pin naar laag gaat
+void toLowIsr()
+{
+  // Bepaal duty cycle
+  if (lastToHighMicros != 0 && idata < NDATA)
+  {
+    durationHigh[idata] = int(micros() - lastToHighMicros);
+    idata++;
+  }
 }
 
