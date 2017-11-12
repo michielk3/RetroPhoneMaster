@@ -11,7 +11,8 @@
 #define PIN_TO_HIGH 2
 #define PIN_TO_LOW  3
 
-#define NDATA 10
+#define NDATA 20
+#define MAX_MEASURE_DURATION 10000                 // 10 s
 
 String  inputString                      = "";     // a string to hold incoming data
 boolean stringComplete                   = false;  // whether the string is complete
@@ -19,11 +20,15 @@ boolean doRing                           = false;
 boolean prevDoRing                       = doRing;
 
 volatile boolean        doMeasure        = false;
+unsigned long           startTimeMeasure = 0;
 
-volatile unsigned int   duration[NDATA];
-volatile unsigned int   durationHigh[NDATA];
+volatile unsigned long  changeTime[NDATA];
+volatile boolean        isToHigh[NDATA];
 volatile unsigned short idata            = 0;
-volatile unsigned long  lastToHighMicros = 0;
+volatile unsigned short jdata            = 0;
+
+volatile unsigned long  iCycle           = 0;
+volatile boolean        measuringStarted = false;
 
 void setup()
 {
@@ -51,6 +56,12 @@ void setup()
   pinMode(PIN_RING_, OUTPUT);
   digitalWrite(PIN_RING,  HIGH);
   digitalWrite(PIN_RING_, HIGH);
+
+  for(int i=0; i<NDATA; i++)
+  {
+    changeTime[i] = 0;
+    isToHigh[i] = false;
+  }
 
 }
 
@@ -82,6 +93,7 @@ void loop()
     {
       // Start measuring
       doMeasure = true;
+      startTimeMeasure = millis();
       attachInterrupt(digitalPinToInterrupt(PIN_TO_HIGH), toHighIsr, RISING);
       attachInterrupt(digitalPinToInterrupt(PIN_TO_LOW),  toLowIsr,  FALLING);
     }
@@ -110,7 +122,7 @@ void loop()
 
   if (doMeasure)
   {
-    if (idata >= NDATA)
+    if (idata >= NDATA || millis() - startTimeMeasure > MAX_MEASURE_DURATION)
     { // print data
       
       // Stop measuring
@@ -120,60 +132,79 @@ void loop()
 
       // ... en reset
       idata            = 0;
-      lastToHighMicros = 0;
+      jdata            = 0;
+      iCycle           = 0;
+      measuringStarted = false;
 
       // Toon data
       Serial.println("duration | durationHigh");
-      for (int i = 0; i < NDATA; i++)
+      for (int i = 1; i < NDATA; i++)
       {
-        Serial.print(duration[i]);
+        Serial.print(changeTime[i] - changeTime[i-1]);
         Serial.print(" | ");
-        Serial.print(durationHigh[i]);
+        if (isToHigh[i-1] && !isToHigh[i])
+          Serial.print("toHigh toLow");
+        if (isToHigh[i-1] && isToHigh[i])
+          Serial.print("toHigh toHigh");
+        if (!isToHigh[i-1] && isToHigh[i])
+          Serial.print("toLow toHigh");
+        if (!isToHigh[i-1] && !isToHigh[i])
+          Serial.print("toLow toLow");
         Serial.println();
       }
       
       // Bereken gemiddelde period en spreiding ervan
-      unsigned int mean = 0;
-      for (int i = 0; i < NDATA; i++)
-        mean += duration[i];
-      mean = int (mean / NDATA);
+      /*
+      unsigned long mean = 0;
+      for (int i = 1; i < NDATA; i++)
+        mean = mean + toHighTime[i] - toHighTime[i-1];
+      mean = long (mean / NDATA);
 
-      unsigned int sdev = 0;
+      unsigned long sdev = 0;
       for (int i = 0; i < NDATA; i++)
       {
-        sdev = mean - duration[i];
+        sdev = mean - toHighTime[i] - toHighTime[i-1];
         sdev = sdev * sdev;
       }
-      sdev = int(sqrt(sdev / NDATA));
+      sdev = long(sqrt(sdev / NDATA));
 
       Serial.print("duration = ");
       Serial.print(mean);
-      Serial.println(" +/- ");
+      Serial.print(" +/- ");
       Serial.print(sdev);
       Serial.println(" (us)");
+      Serial.print("freq = ");
+      Serial.print(1E6 * 1./mean);
+      Serial.println(" (Hz)");
       Serial.println();
       
       // Bereken gemiddelde duty cycle en spreiding ervan
-      mean = 0;
-      for (int i = 0; i < NDATA; i++)
-        mean += int(100 * durationHigh[i] / duration[i]);
-      mean = int (mean / NDATA);
-
-      sdev = 0;
-      for (int i = 0; i < NDATA; i++)
+      /*mean = 0;
+      for (int i = 1; i < NDATA; i++)
       {
-        sdev = (mean - int(100 * durationHigh[i] / duration[i]));
-        sdev = sdev * sdev;
+        if (toHighTime[i] - toHighTime[i-1] != 0)
+          mean += (100 * (toLowTime[i] - toHighTime[i-1)] / (toHighTime[i] - toHighTime[i-1]));
       }
-      sdev = int(sqrt(sdev / NDATA));
+      mean = long (mean / NDATA);
+/*
+      sdev = 0;
+      for (int i = 1; i < NDATA; i++)
+      {
+        if (toHighTime[i] - toHighTime[i-1] != 0)
+        {
+          sdev = (mean - long(100 * (toLowTime[i] - toHighTime[i-1)] / (toHighTime[i] - toHighTime[i-1])));
+          sdev = sdev * sdev;
+        }
+      }
+      sdev = long(sqrt(sdev / NDATA));
 
       Serial.print("duty = ");
       Serial.print(mean);
-      Serial.println(" +/- ");
+      Serial.print(" +/- ");
       Serial.print(sdev);
       Serial.println(" (%)");
       Serial.println();
-
+*/
  
     }
 
@@ -210,21 +241,24 @@ void serialEvent()
 // Interrupt routine voor als pin naar hoog gaat
 void toHighIsr()
 {
-  // Bepaal periode
-  unsigned long changeMicros = micros();
-  if (lastToHighMicros != 0 && idata < NDATA)
-    duration[idata] = int(changeMicros - lastToHighMicros);
-  lastToHighMicros = changeMicros;
+  if (iCycle++ == 2)
+    measuringStarted = true;
+  if (measuringStarted && idata < NDATA)
+  {
+    changeTime[idata] = micros();
+    isToHigh[idata++] = true;
+  }
 }
 
 // Interrupt routine voor als pin naar laag gaat
 void toLowIsr()
 {
   // Bepaal duty cycle
-  if (lastToHighMicros != 0 && idata < NDATA)
+  unsigned long changeMicros = micros();
+  if (measuringStarted && idata < NDATA)
   {
-    durationHigh[idata] = int(micros() - lastToHighMicros);
-    idata++;
+    changeTime[idata] = micros();
+    isToHigh[idata++] = false;
   }
 }
 
