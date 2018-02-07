@@ -72,6 +72,27 @@ void loop()
     Serial.println(inputString);
 
     // Doe iets
+    if (inputString == "?" || inputString == "h" || inputString == "H")
+    {
+       Serial.println("A     : start ringing");
+       Serial.println("0     : stop ringing");
+       Serial.println("RST   : reset ATTiny ringer controller");
+       Serial.println("MA100 : measure analog at 100 ms intervals");
+       Serial.println("MA10  : measure analog at  10 ms intervals");
+       Serial.println("MA1   : measure analog at   1 ms intervals");
+       Serial.println("MD100 : measure digital at 100 us intervals");
+       Serial.println("MD10  : measure digital at  10 us intervals");
+       Serial.println("");
+       Serial.println("pins:");
+       Serial.println("PIN_TX    : 11 (niet gebruikt)");
+       Serial.println("PIN_TX_  .: A1 (niet gebruikt)");
+       Serial.println("PIN_RST   : 10");
+       Serial.println("PIN_RST_  : A2");
+       Serial.println("PIN_RING  : 13");
+       Serial.println("PIN_RING_ : A0");
+       Serial.println("PIN_VOLT  : A5");
+
+    }
     if (inputString == "A")
     {
       doRing = true;
